@@ -1,33 +1,46 @@
-import logging
-
-from astrbot import register, Context, Star
+from astrbot.api.event import filter
+from astrbot.api.star import register, Context, Star
+from astrbot.core.permission import PermissionManager
 from aiocqhttp import CQHttp
-
-logger = logging.getLogger(__name__)
 
 @register("mcp_group_ban", "YourName", "一个让LLM支持禁言能力的插件，仅适用于aiocqhttp MCP平台", "1.0.0")
 class MCPBanPlugin(Star):
-    def __init__(self, context: Context):
+    def __init__(self, context: Context, bot: CQHttp):
         super().__init__(context)
-        self.bot: CQHttp = context.get_client()
+        self.bot = bot
+        self.context = context
 
     async def initialize(self):
-        """在插件初始化时执行的操作，这里无需特别操作，可以根据实际情况添加初始化逻辑。"""
+        """在插件初始化时执行的操作，这里初始化一些可能需要的设置。"""
         pass
 
-    # 注册指令的装饰器，该指令负责处理禁言操作
+    async def execute_ban_user(self, event, duration=None):
+        """禁言指定用户命令处理方法"""
+        duration = int(duration) if duration else 60
+        ats = event.mes.get('at', [])
+        msg = f"已将"
+        for user in ats:
+            user_id = str(user['user_id'])
+            try:
+                await self.bot.set_group_ban(
+                    group_id=event.group_id,
+                    user_id=int(user_id),
+                    duration=duration
+                )
+                msg += f" {user_id},"
+            except Exception as e:
+                logging.error(f"执行禁言时出错：{e}")
+        msg += f"设置为禁言状态，时长{duration}秒。"
+        await event.send_event(msg)
+
     @filter.command("禁言")
-    @perm_required(PermLevel.ADMIN)
-    async def ban_command(self, event: AiocqhttpMessageEvent, duration: int):
-        """执行群聊禁言，被调用时需要一个参数，表示禁言的秒数"""
-        # 获取参数中的禁言时长，默认为60秒
-        duration = duration or 60
-        for tid in get_ats(event):
-            # 实际操作禁言
-            await self.bot.set_group_ban(
-                group_id=int(event.get_group_id()),
-                user_id=int(tid),
-                duration=duration,
-            )
-            # 向群聊发送确认消息
-            await event.send_event(f"已将【{tid}】设置为禁言状态，时长为{duration}秒")
+    async def ban_command(self, event, duration=None):
+        """禁言 60 @user"""
+        if not duration:
+            await event.send_event('你需要提供一个正整数来表示禁言的时长（秒）。默认为60秒。')
+            return
+        duration = int(duration)
+        if await PermissionManager.is_permitted(event.get_sender_id(), 5):  # 假设5为管理员权限
+            await self.execute_ban_user(event, duration)
+        else:
+            await event.send_event("你没有执行该命令的权限。")
