@@ -1,13 +1,14 @@
+import re
+import asyncio
+import datetime
 from astrbot.api.event import filter, AstrMessageEvent
 from astrbot.api.star import Context, Star, register
 from astrbot.api import logger
 from astrbot.core.platform.sources.aiocqhttp.aiocqhttp_message_event import (
     AiocqhttpMessageEvent,
 )
-from astrbot.api.star import StarTools
 from astrbot.core.star.filter.event_message_type import EventMessageType
-import re
-import datetime
+from astrbot.core import AstrBotConfig
 
 @register(
     "llm_ban_plugin",
@@ -17,9 +18,17 @@ import datetime
     "https://github.com/your-repo/llm-ban-plugin"
 )
 class LLMBanPlugin(Star):
-    def __init__(self, context: Context, config):
+    def __init__(self, context: Context, config: AstrBotConfig):
         super().__init__(context)
         self.config = config
+        self._load_config()
+        
+        # 存储用户在不同会话中的最后消息时间
+        self.last_message_time = {}
+    
+    def _load_config(self):
+        """加载并初始化插件配置"""
+        # 从配置中获取参数
         self.admins_id = set(self.config.get("admins_id", []))
         self.min_ban_time = self.config.get("min_ban_time", 60)  # 默认最小禁言时间60秒
         self.max_ban_time = self.config.get("max_ban_time", 600)  # 默认最大禁言时间600秒
@@ -31,9 +40,6 @@ class LLMBanPlugin(Star):
             "admin": 1,
             "owner": 2
         }
-        
-        # 存储用户在不同会话中的最后消息时间
-        self.last_message_time = {}
     
     async def initialize(self):
         logger.info("LLM禁言插件已加载")
@@ -110,12 +116,18 @@ class LLMBanPlugin(Star):
                 ban_time = int(ban_time_str) if ban_time_str.isdigit() else self.min_ban_time
                 ban_time = max(self.min_ban_time, min(ban_time, self.max_ban_time))
                 
-                # 通过用户名获取用户ID（简化处理，实际应用中可能需要更精确的映射）
+                # 通过用户名获取用户ID
                 target_id = await self.get_user_id_by_name(event, target_name)
                 if not target_id:
                     results.append(f"❌ 未找到用户: {target_name}")
                     continue
                     
+                # 检查目标用户权限
+                target_perm = await self.get_user_permission(event, target_id)
+                if target_perm >= self.perm_levels["admin"]:
+                    results.append(f"❌ 不能禁言管理员或群主: {target_name}")
+                    continue
+                
                 # 执行禁言操作
                 try:
                     await event.bot.set_group_ban(
@@ -136,9 +148,7 @@ class LLMBanPlugin(Star):
             logger.exception("处理LLM禁言指令时出错")
     
     async def get_user_id_by_name(self, event: AiocqhttpMessageEvent, username: str):
-        """通过用户名获取用户ID（简化实现）"""
-        # 在实际应用中需要更精确的映射，这里简化处理
-        # 可以查询群成员列表进行匹配
+        """通过用户名获取用户ID"""
         try:
             group_id = int(event.get_group_id())
             member_list = await event.bot.get_group_member_list(group_id=group_id)
