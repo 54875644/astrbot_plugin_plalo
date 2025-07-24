@@ -1,5 +1,4 @@
 import re
-import asyncio
 import datetime
 from astrbot.api.event import filter, AstrMessageEvent
 from astrbot.api.star import Context, Star, register
@@ -22,8 +21,6 @@ class LLMBanPlugin(Star):
         super().__init__(context)
         self.config = config
         self._load_config()
-        
-        # 存储用户在不同会话中的最后消息时间
         self.last_message_time = {}
     
     def _load_config(self):
